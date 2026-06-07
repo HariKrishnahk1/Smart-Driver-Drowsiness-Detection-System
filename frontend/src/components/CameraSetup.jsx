@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Camera, Globe, CheckCircle, AlertTriangle, ArrowRight, Play } from 'lucide-react';
 
-const API_BASE = 'http://localhost:5000/api';
+const API_BASE = (import.meta.env.VITE_API_BASE || 'http://localhost:5000') + '/api';
 
 export default function CameraSetup({ vehicleNumber, onPairSuccess }) {
   const [cameraType, setCameraType] = useState('webcam'); // 'webcam' or 'ip_camera'

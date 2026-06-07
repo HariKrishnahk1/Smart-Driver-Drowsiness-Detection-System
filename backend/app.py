@@ -322,4 +322,7 @@ def get_active_vehicles():
     return vehicles
 
 if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True, allow_unsafe_werkzeug=True)
+    port = int(os.environ.get('PORT', 5000))
+    # Disable debug mode in production to prevent duplicate process spawning
+    debug_mode = os.environ.get('RENDER') is None
+    socketio.run(app, host='0.0.0.0', port=port, debug=debug_mode, allow_unsafe_werkzeug=True)

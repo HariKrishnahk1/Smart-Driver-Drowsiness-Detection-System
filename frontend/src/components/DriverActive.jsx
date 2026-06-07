@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Shield, ShieldAlert, AlertTriangle, Eye, VideoOff, Timer, LogOut } from 'lucide-react';
 import io from 'socket.io-client';
 
-const API_BASE = 'http://localhost:5000';
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5000';
 
 export default function DriverActive({ vehicleNumber, onStop }) {
   const [status, setStatus] = useState('Awake');

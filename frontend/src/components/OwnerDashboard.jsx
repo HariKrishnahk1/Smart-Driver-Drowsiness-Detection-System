@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Shield, Eye, Users, AlertOctagon, RefreshCw, BarChart2, Bell, Clock, Database, Image as ImageIcon, X, Plus, Trash2, VideoOff } from 'lucide-react';
 import io from 'socket.io-client';
 
-const API_BASE = 'http://localhost:5000';
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5000';
 
 export default function OwnerDashboard({ onLogout }) {
   const [activeVehicles, setActiveVehicles] = useState([]);

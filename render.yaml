@@ -1,0 +1,22 @@
+services:
+  # Python Backend Web Service
+  - type: web
+    name: sddds-backend
+    env: docker
+    dockerfilePath: backend/Dockerfile
+    plan: free
+    disk:
+      name: db-volume
+      mountPath: /app/db_volume
+      sizeGB: 1
+
+  # Vite React Frontend Static Web Service
+  - type: web
+    name: sddds-frontend
+    env: static
+    buildCommand: npm run build
+    publishPath: dist
+    rootDir: frontend
+    envVars:
+      - key: VITE_API_BASE
+        value: https://sddds-backend.onrender.com # Change this to your deployed backend URL on Render
