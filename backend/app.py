@@ -409,7 +409,7 @@ def handle_driver_frame(data):
     image_data = data.get('image')
     detector = active_monitors.get(vehicle_number)
     if detector and image_data:
-        detector.process_client_frame(image_data)
+        detector.process_client_frame(data)
 
 @socketio.on('join_dashboard')
 def handle_join_dashboard(data):

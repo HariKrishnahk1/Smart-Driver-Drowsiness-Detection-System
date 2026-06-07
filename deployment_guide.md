@@ -62,37 +62,12 @@ We deploy the React frontend as a Render Static Site.
 
 ---
 
-## Option 2: Real-Time Zero-Lag Webcam Streaming (Local Backend + ngrok)
+## WebAssembly Client-Side AI Architecture
 
-If you require buttery-smooth local webcam processing at 30 FPS without cloud CPU bottlenecks or network delays:
-
-1. **Run the Backend Locally**:
-   * Open your terminal in the project directory.
-   * Run the Python backend:
-     ```bash
-     cd backend
-     # Make sure your virtual environment is active (e.g., venv\Scripts\activate)
-     python app.py
-     ```
-   * It will run on `http://localhost:5000`.
-
-2. **Expose Backend via ngrok**:
-   * Download and launch [ngrok](https://ngrok.com).
-   * Expose your local port `5000` to a secure public URL:
-     ```bash
-     ngrok http 5000
-     ```
-   * Copy the generated HTTPS forwarding URL (e.g., `https://abcdef123.ngrok-free.app`).
-
-3. **Configure Render Frontend**:
-   * Log in to the [Render Dashboard](https://dashboard.render.com) and click on your **sddds-frontend** Static Site.
-   * Go to the **Environment** tab.
-   * Update `VITE_API_BASE` value to your **ngrok URL** (e.g., `https://abcdef123.ngrok-free.app`).
-   * Save changes and trigger a manual redeploy of the static site.
-
-4. **Verify Zero-Lag Streaming**:
-   * Open the public Render frontend URL in your browser.
-   * Log in as a driver, pair the webcam, and start monitoring. Your local webcam will open instantly and process frames at 30 FPS, while syncing status updates and incidents live to the cloud database for owners to view from anywhere!
+The system utilizes a modern client-side AI architecture for webcam streaming:
+- **Zero-Lag Processing**: The MediaPipe FaceMesh model runs directly in the driver's browser using WebAssembly. This leverages the client's local hardware to track facial landmarks at a smooth 30 FPS, bypassing cloud CPU limits on Render's free tier.
+- **Instant Local Alerts**: Drowsiness (EAR), yawning (MAR), and head nodding (Pitch) calculations are computed in JavaScript. Warning sounds (`fa.mp3` and `y.mp3`) play immediately in the driver's browser without waiting for network round-trips.
+- **Lightweight Backend Relay**: The browser draws the face mesh, bounding box, and HUD indicators onto a local canvas, encoding and transmitting the pre-rendered frames (JPEG base64) to the Render backend at 10 FPS. The backend stores alerts in the SQLite database and relays the feed to the Fleet Owner Dashboard in real-time, keeping backend CPU overhead under 5%.
 
 ---
 

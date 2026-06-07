@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { ArrowLeft, User, Key, Car, Shield, Eye, EyeOff } from 'lucide-react';
-
-const API_BASE = (import.meta.env.VITE_API_BASE || 'http://localhost:5000') + '/api';
+import { API_URL as API_BASE } from '../utils/api';
 
 export default function LoginCard({ role, onBack, onLoginSuccess }) {
   const [isRegister, setIsRegister] = useState(false);
