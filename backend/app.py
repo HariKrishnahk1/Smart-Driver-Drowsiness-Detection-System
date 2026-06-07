@@ -261,7 +261,7 @@ def stream_video(vehicle_number):
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + placeholder_bytes + b'\r\n')
                
-        while vehicle_number in active_monitors:
+        while vehicle_number in active_monitors and detector.running:
             frame = detector.get_latest_frame()
             if frame:
                 yield (b'--frame\r\n'
