@@ -12,11 +12,14 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy requirements and install
-COPY requirements.txt .
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the backend files
 COPY . .
+
+# Set working directory to backend
+WORKDIR /app/backend
 
 # Create database volume directory
 RUN mkdir -p /app/db_volume
