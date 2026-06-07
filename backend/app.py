@@ -28,6 +28,105 @@ def index():
         'service': 'Smart Driver Drowsiness Detection System Backend'
     })
 
+@app.route('/api/diagnostics', methods=['GET'])
+def run_diagnostics():
+    import traceback
+    import cv2
+    results = {}
+    
+    # 1. System checks
+    results['working_dir'] = os.getcwd()
+    results['dir_contents'] = os.listdir(os.getcwd())
+    if os.path.exists('../'):
+        results['parent_dir_contents'] = os.listdir('../')
+    
+    # 2. Check video file path and existence
+    try:
+        video_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'Video Project 11.mp4'))
+        results['video_file'] = {
+            'path': video_path,
+            'exists': os.path.exists(video_path)
+        }
+        if os.path.exists(video_path):
+            results['video_file']['size_bytes'] = os.path.getsize(video_path)
+    except Exception as e:
+        results['video_file'] = {
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }
+        
+    # 3. Test OpenCV VideoCapture opening video
+    try:
+        if results.get('video_file', {}).get('exists'):
+            cap = cv2.VideoCapture(video_path)
+            opened = cap.isOpened()
+            results['opencv_capture'] = {
+                'opened': opened
+            }
+            if opened:
+                ret, frame = cap.read()
+                results['opencv_capture']['frame_read_success'] = ret
+                if ret:
+                    results['opencv_capture']['frame_shape'] = list(frame.shape)
+                cap.release()
+            else:
+                results['opencv_capture']['error'] = 'VideoCapture.isOpened() returned False'
+        else:
+            results['opencv_capture'] = {
+                'skipped': 'Video file does not exist'
+            }
+    except Exception as e:
+        results['opencv_capture'] = {
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }
+        
+    # 4. Test MediaPipe FaceMesh Initialization
+    try:
+        import mediapipe as mp
+        results['mediapipe_import'] = {
+            'success': True,
+            'version': mp.__version__
+        }
+        
+        mp_face_mesh = mp.solutions.face_mesh
+        face_mesh = mp_face_mesh.FaceMesh(
+            max_num_faces=1,
+            refine_landmarks=True,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5
+        )
+        results['mediapipe_facemesh'] = {
+            'success': True
+        }
+        face_mesh.close()
+    except Exception as e:
+        results['mediapipe_facemesh'] = {
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }
+        
+    # 5. Test SQLite database connection and operations
+    try:
+        conn = db.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        val = cursor.fetchone()[0]
+        results['database'] = {
+            'success': True,
+            'test_query_val': val
+        }
+        conn.close()
+    except Exception as e:
+        results['database'] = {
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }
+        
+    return jsonify(results)
+
 @app.route('/backend/screenshots/<path:filename>')
 def serve_screenshot(filename):
     return send_from_directory(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'screenshots'), filename)
