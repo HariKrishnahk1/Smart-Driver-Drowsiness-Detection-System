@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Shield, ShieldAlert, AlertTriangle, Eye, VideoOff, Timer, LogOut } from 'lucide-react';
 import io from 'socket.io-client';
 
@@ -13,10 +13,6 @@ export default function DriverActive({ vehicleNumber, onStop }) {
   const [loading, setLoading] = useState(false);
   const [streamError, setStreamError] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
-  
-  const [socket, setSocket] = useState(null);
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
 
   const handleImageError = () => {
     setStreamError(true);
@@ -34,24 +30,23 @@ export default function DriverActive({ vehicleNumber, onStop }) {
     return () => clearInterval(interval);
   }, []);
 
-  // 2. Socket.IO connection for real-time telemetry updates and frame transmissions
+  // 2. Socket.IO connection for real-time telemetry updates
   useEffect(() => {
-    const s = io(API_BASE);
-    setSocket(s);
+    const socket = io(API_BASE);
     
-    s.on('connect', () => {
+    socket.on('connect', () => {
       console.log('Driver Socket Connected');
     });
 
     // Listen to status updates from backend
-    s.on('status_change', (data) => {
+    socket.on('status_change', (data) => {
       if (data.vehicle_number === vehicleNumber.toUpperCase()) {
         setStatus(data.status);
       }
     });
 
     // Listen to new alerts triggered to increment counts locally
-    s.on('new_alert', (data) => {
+    socket.on('new_alert', (data) => {
       if (data.vehicle_number === vehicleNumber.toUpperCase()) {
         if (data.alert_type === 'sleeping') {
           setSleepCount(c => c + 1);
@@ -74,64 +69,9 @@ export default function DriverActive({ vehicleNumber, onStop }) {
     });
 
     return () => {
-      s.disconnect();
+      socket.disconnect();
     };
   }, [vehicleNumber]);
-
-  // 3. Capture local webcam and initialize the video stream
-  useEffect(() => {
-    let activeStream = null;
-    
-    navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
-      .then(stream => {
-        activeStream = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.play().catch(err => console.error("Video play error:", err));
-        }
-      })
-      .catch(err => {
-        console.error("Error accessing webcam:", err);
-      });
-      
-    return () => {
-      if (activeStream) {
-        activeStream.getTracks().forEach(track => track.stop());
-      }
-    };
-  }, []);
-
-  // 4. Send video frames to the backend via WebSocket
-  useEffect(() => {
-    let intervalId = null;
-    
-    const sendFrame = () => {
-      if (videoRef.current && canvasRef.current && socket) {
-        const video = videoRef.current;
-        const canvas = canvasRef.current;
-        const ctx = canvas.getContext('2d');
-        
-        if (video.readyState === video.HAVE_ENOUGH_DATA) {
-          canvas.width = 640;
-          canvas.height = 480;
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.6); // Compress quality to 60% to save bandwidth
-          socket.emit('driver_frame', {
-            vehicle_number: vehicleNumber,
-            image: dataUrl
-          });
-        }
-      }
-    };
-    
-    if (socket) {
-      intervalId = setInterval(sendFrame, 100); // 10 FPS
-    }
-    
-    return () => {
-      if (intervalId) clearInterval(intervalId);
-    };
-  }, [socket, vehicleNumber]);
 
   const formatDuration = (sec) => {
     const h = Math.floor(sec / 3600).toString().padStart(2, '0');
@@ -202,8 +142,6 @@ export default function DriverActive({ vehicleNumber, onStop }) {
           </div>
 
           <div style={styles.videoContainer}>
-            <video ref={videoRef} style={{ display: 'none' }} playsInline muted />
-            <canvas ref={canvasRef} style={{ display: 'none' }} />
             {!streamError ? (
               <img 
                 src={`${API_BASE}/api/stream/${vehicleNumber}?t=${Date.now()}&retry=${retryKey}`} 

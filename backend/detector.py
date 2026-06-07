@@ -288,29 +288,41 @@ class DrowsinessDetector:
             print(f"[DEBUG MONITOR] Starting camera init for {self.vehicle_number}, camera_type={self.camera_type}, camera_url={self.camera_url}")
             
             if self.camera_type == 'webcam':
-                print(f"[INFO] Webcam client-stream mode active for {self.vehicle_number}. Passive monitoring started.")
-                # Just loop and sleep while running, client-side sends frames via socket driver_frame event
-                while self.running:
-                    time.sleep(0.1)
-                return
-                
-            source = self.camera_url
-            print(f"[DEBUG MONITOR] Attempting IP Camera/video URL: {source}")
-            # Try to resolve relative paths for local files
-            if source and not any(source.startswith(prefix) for prefix in ['rtsp://', 'http://', 'https://']):
-                if not os.path.exists(source):
-                    root_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', source))
-                    print(f"[DEBUG MONITOR] Checking root path: {root_path}")
-                    if os.path.exists(root_path):
-                        source = root_path
-                    else:
-                        public_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'frontend', 'public', source))
-                        print(f"[DEBUG MONITOR] Checking public path: {public_path}")
-                        if os.path.exists(public_path):
-                            source = public_path
-                self.is_video_file = True
-            cap = cv2.VideoCapture(source)
-            print(f"[DEBUG MONITOR] IP Camera/video source opened: {cap.isOpened()}")
+                source = 0
+                print("[DEBUG MONITOR] Attempting local webcam source 0")
+                cap = cv2.VideoCapture(source)
+                if not cap.isOpened():
+                    print("[DEBUG MONITOR] Webcam source 0 failed, trying CAP_DSHOW")
+                    cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
+                    
+                if not cap.isOpened():
+                    fallback_video = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'Video Project 11.mp4'))
+                    print(f"[DEBUG MONITOR] Webcam failed. Checking fallback video path: {fallback_video}")
+                    print(f"[DEBUG MONITOR] Fallback video file exists: {os.path.exists(fallback_video)}")
+                    if os.path.exists(fallback_video):
+                        source = fallback_video
+                        print(f"[DEBUG MONITOR] Loading fallback video: {source}")
+                        cap = cv2.VideoCapture(source)
+                        self.is_video_file = True
+                        print(f"[DEBUG MONITOR] Fallback video opened: {cap.isOpened()}")
+            else:
+                source = self.camera_url
+                print(f"[DEBUG MONITOR] Attempting IP Camera/video URL: {source}")
+                # Try to resolve relative paths for local files
+                if source and not any(source.startswith(prefix) for prefix in ['rtsp://', 'http://', 'https://']):
+                    if not os.path.exists(source):
+                        root_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', source))
+                        print(f"[DEBUG MONITOR] Checking root path: {root_path}")
+                        if os.path.exists(root_path):
+                            source = root_path
+                        else:
+                            public_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'frontend', 'public', source))
+                            print(f"[DEBUG MONITOR] Checking public path: {public_path}")
+                            if os.path.exists(public_path):
+                                source = public_path
+                    self.is_video_file = True
+                cap = cv2.VideoCapture(source)
+                print(f"[DEBUG MONITOR] IP Camera/video source opened: {cap.isOpened()}")
                 
             if not cap.isOpened():
                 print(f"[ERROR] Failed to open camera for {self.vehicle_number} (both primary and fallback failed)")
