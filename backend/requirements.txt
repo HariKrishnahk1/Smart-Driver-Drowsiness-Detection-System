@@ -1,7 +1,7 @@
 Flask
 Flask-Cors
 Flask-SocketIO
-mediapipe
+mediapipe==0.10.14
 numpy
 werkzeug
 simple-websocket
