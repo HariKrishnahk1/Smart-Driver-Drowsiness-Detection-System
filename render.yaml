@@ -14,9 +14,9 @@ services:
   - type: web
     name: sddds-frontend
     env: static
-    buildCommand: npm run build
-    publishPath: dist
     rootDir: frontend
+    buildCommand: npm install && npm run build
+    publishPath: dist
     envVars:
       - key: VITE_API_BASE
-        value: https://sddds-backend.onrender.com # Change this to your deployed backend URL on Render
+        value: https://sddds-backend.onrender.com
