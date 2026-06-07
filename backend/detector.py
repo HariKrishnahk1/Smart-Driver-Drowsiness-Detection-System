@@ -270,59 +270,80 @@ class DrowsinessDetector:
             print(f"[ALERT] Triggered {alert_type} for {self.vehicle_number}")
 
     def _run_monitoring(self):
-        # Choose camera source
-        self.is_video_file = False
-        if self.camera_type == 'webcam':
-            source = 0
-            # Try default backend first (fails immediately if no webcam on Windows)
-            cap = cv2.VideoCapture(source)
-            if not cap.isOpened():
-                # Try DirectShow just in case it is preferred by the system
-                cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
+        try:
+            # Choose camera source
+            self.is_video_file = False
+            print(f"[DEBUG MONITOR] Starting camera init for {self.vehicle_number}, camera_type={self.camera_type}, camera_url={self.camera_url}")
+            if self.camera_type == 'webcam':
+                source = 0
+                print("[DEBUG MONITOR] Attempting webcam source 0")
+                cap = cv2.VideoCapture(source)
+                if not cap.isOpened():
+                    print("[DEBUG MONITOR] Webcam source 0 failed, trying CAP_DSHOW")
+                    cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
+                    
+                if not cap.isOpened():
+                    fallback_video = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'Video Project 11.mp4'))
+                    print(f"[DEBUG MONITOR] Webcam failed. Checking fallback video path: {fallback_video}")
+                    print(f"[DEBUG MONITOR] Fallback video file exists: {os.path.exists(fallback_video)}")
+                    if os.path.exists(fallback_video):
+                        source = fallback_video
+                        print(f"[DEBUG MONITOR] Loading fallback video: {source}")
+                        cap = cv2.VideoCapture(source)
+                        self.is_video_file = True
+                        print(f"[DEBUG MONITOR] Fallback video opened: {cap.isOpened()}")
+            else:
+                source = self.camera_url
+                print(f"[DEBUG MONITOR] Attempting IP Camera/video URL: {source}")
+                # Try to resolve relative paths for local files
+                if source and not any(source.startswith(prefix) for prefix in ['rtsp://', 'http://', 'https://']):
+                    if not os.path.exists(source):
+                        root_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', source))
+                        print(f"[DEBUG MONITOR] Checking root path: {root_path}")
+                        if os.path.exists(root_path):
+                            source = root_path
+                        else:
+                            public_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'frontend', 'public', source))
+                            print(f"[DEBUG MONITOR] Checking public path: {public_path}")
+                            if os.path.exists(public_path):
+                                source = public_path
+                    self.is_video_file = True
+                cap = cv2.VideoCapture(source)
+                print(f"[DEBUG MONITOR] IP Camera/video source opened: {cap.isOpened()}")
                 
             if not cap.isOpened():
-                # Fallback to local video file if webcam is not available
-                fallback_video = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'Video Project 11.mp4'))
-                if os.path.exists(fallback_video):
-                    source = fallback_video
-                    cap = cv2.VideoCapture(source)
-                    self.is_video_file = True
-        else:
-            source = self.camera_url
-            # Try to resolve relative paths for local files
-            if source and not any(source.startswith(prefix) for prefix in ['rtsp://', 'http://', 'https://']):
-                if not os.path.exists(source):
-                    root_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', source))
-                    if os.path.exists(root_path):
-                        source = root_path
-                    else:
-                        public_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'frontend', 'public', source))
-                        if os.path.exists(public_path):
-                            source = public_path
-                self.is_video_file = True
-            cap = cv2.VideoCapture(source)
-            
-        if not cap.isOpened():
-            print(f"[ERROR] Failed to open camera for {self.vehicle_number}")
+                print(f"[ERROR] Failed to open camera for {self.vehicle_number} (both primary and fallback failed)")
+                self.status = "Error"
+                if self.socketio:
+                    self.socketio.emit('status_change', {
+                        'vehicle_number': self.vehicle_number,
+                        'status': 'Camera Error'
+                    })
+                self.running = False
+                return
+                
+            # Initialize MediaPipe
+            print("[DEBUG MONITOR] Initializing MediaPipe FaceMesh")
+            mp_face_mesh = mp.solutions.face_mesh
+            face_mesh = mp_face_mesh.FaceMesh(
+                max_num_faces=1,
+                refine_landmarks=True,
+                min_detection_confidence=0.5,
+                min_tracking_confidence=0.5
+            )
+            print(f"[INFO] Monitoring started successfully for {self.vehicle_number} using {self.camera_type}")
+        except Exception as e:
+            print(f"[FATAL INIT ERROR] Exception during detector setup: {e}")
+            import traceback
+            traceback.print_exc()
             self.status = "Error"
+            self.running = False
             if self.socketio:
                 self.socketio.emit('status_change', {
                     'vehicle_number': self.vehicle_number,
-                    'status': 'Camera Error'
+                    'status': 'Error'
                 })
-            self.running = False
             return
-            
-        # Initialize MediaPipe
-        mp_face_mesh = mp.solutions.face_mesh
-        face_mesh = mp_face_mesh.FaceMesh(
-            max_num_faces=1,
-            refine_landmarks=True,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5
-        )
-        
-        print(f"[INFO] Monitoring started for {self.vehicle_number} using {self.camera_type}")
         
         consecutive_failures = 0
         while self.running:
@@ -347,7 +368,17 @@ class DrowsinessDetector:
                         ret, frame = cap.read()
                     
                     if not ret:
-                        print(f"[WARN] Failed to grab frame for {self.vehicle_number}")
+                        print(f"[WARN] Failed to grab frame for {self.vehicle_number}. Consecutive failures: {consecutive_failures}")
+                        if consecutive_failures >= 15:
+                            print(f"[ERROR] Max consecutive frame failures reached (15) for {self.vehicle_number}. Exiting detector loop.")
+                            self.status = "Error"
+                            self.running = False
+                            if self.socketio:
+                                self.socketio.emit('status_change', {
+                                    'vehicle_number': self.vehicle_number,
+                                    'status': 'Camera Error'
+                                })
+                            break
                         time.sleep(0.03)
                         continue
                 else:
