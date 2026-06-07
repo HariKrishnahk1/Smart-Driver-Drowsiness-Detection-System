@@ -21,6 +21,13 @@ active_monitors = {}
 # Initialize DB
 db.init_db()
 
+@app.route('/')
+def index():
+    return jsonify({
+        'status': 'healthy',
+        'service': 'Smart Driver Drowsiness Detection System Backend'
+    })
+
 @app.route('/backend/screenshots/<path:filename>')
 def serve_screenshot(filename):
     return send_from_directory(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'screenshots'), filename)
