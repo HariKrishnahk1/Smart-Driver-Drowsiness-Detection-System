@@ -54,7 +54,14 @@ export default function DriverActive({ vehicleNumber, onStop }) {
           const audio = new Audio('/fa.mp3');
           audio.play().catch(e => console.warn("Audio play blocked by browser:", e));
         } else if (data.alert_type === 'yawning') {
-          setYawnCount(c => c + 1);
+          setYawnCount(c => {
+            const nextCount = c + 1;
+            if (nextCount >= 1) {
+              const audio = new Audio('/y.mp3');
+              audio.play().catch(e => console.warn("Audio play blocked by browser:", e));
+            }
+            return nextCount;
+          });
         } else if (data.alert_type === 'nodding') {
           setNodCount(c => c + 1);
         }

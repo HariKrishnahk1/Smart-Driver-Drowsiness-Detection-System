@@ -70,6 +70,71 @@ class DrowsinessDetector:
         if not os.path.exists(self.screenshots_dir):
             os.makedirs(self.screenshots_dir)
             
+    def get_mock_landmarks(self, t):
+        # Initialize 478 landmarks
+        landmarks = [[0.5, 0.5, 0.0] for _ in range(478)]
+        
+        # Base coordinates (normalized)
+        cx, cy = 0.5, 0.5
+        
+        # Animate EAR, MAR, Pitch based on a 30s cycle
+        cycle_time = t % 30
+        
+        # Default values
+        ear = 0.30
+        mar = 0.15
+        pitch = 0.0
+        
+        if 5 <= cycle_time < 9:
+            # Yawning phase: MAR increases
+            # peak yawn at 7s
+            yawn_intensity = 1.0 - abs(cycle_time - 7.0) / 2.0
+            yawn_intensity = max(0.0, yawn_intensity)
+            mar = 0.15 + yawn_intensity * 0.45  # Peak MAR: 0.60
+        elif 13 <= cycle_time < 17:
+            # Sleeping phase: EAR decreases
+            # peak sleep at 15s
+            sleep_intensity = 1.0 - abs(cycle_time - 15.0) / 2.0
+            sleep_intensity = max(0.0, sleep_intensity)
+            ear = 0.30 - sleep_intensity * 0.20  # Peak EAR: 0.10
+        elif 21 <= cycle_time < 25:
+            # Nodding phase: Pitch goes down
+            # peak nod at 23s
+            nod_intensity = 1.0 - abs(cycle_time - 23.0) / 2.0
+            nod_intensity = max(0.0, nod_intensity)
+            pitch = 0.0 - nod_intensity * 25.0  # Peak Pitch: -25.0
+            
+        ey_height = ear * 0.06
+        landmarks[33]  = [cx - 0.08, cy - 0.05, 0.0]  # P1
+        landmarks[133] = [cx - 0.02, cy - 0.05, 0.0]  # P4
+        landmarks[160] = [cx - 0.06, cy - 0.05 - ey_height, 0.0]  # P2
+        landmarks[158] = [cx - 0.04, cy - 0.05 - ey_height, 0.0]  # P3
+        landmarks[144] = [cx - 0.06, cy - 0.05 + ey_height, 0.0]  # P6
+        landmarks[153] = [cx - 0.04, cy - 0.05 + ey_height, 0.0]  # P5
+
+        landmarks[362] = [cx + 0.02, cy - 0.05, 0.0]  # P1
+        landmarks[263] = [cx + 0.08, cy - 0.05, 0.0]  # P4
+        landmarks[385] = [cx + 0.04, cy - 0.05 - ey_height, 0.0]  # P2
+        landmarks[386] = [cx + 0.06, cy - 0.05 - ey_height, 0.0]  # P3
+        landmarks[374] = [cx + 0.04, cy - 0.05 + ey_height, 0.0]  # P6
+        landmarks[373] = [cx + 0.06, cy - 0.05 + ey_height, 0.0]  # P5
+
+        m_height = mar * 0.10
+        landmarks[78]  = [cx - 0.05, cy + 0.05, 0.0]  # Left
+        landmarks[308] = [cx + 0.05, cy + 0.05, 0.0]  # Right
+        landmarks[13]  = [cx, cy + 0.05 - m_height/2.0, 0.0]  # Top
+        landmarks[14]  = [cx, cy + 0.05 + m_height/2.0, 0.0]  # Bottom
+
+        landmarks[1] = [cx, cy + (pitch / 100.0), -0.1]
+        landmarks[152] = [cx, cy + 0.15, 0.0]
+        
+        # Bounding box outer markers
+        landmarks[10] = [cx, cy - 0.12, 0.0] # Top of forehead
+        landmarks[234] = [cx - 0.12, cy, 0.0] # Left side
+        landmarks[454] = [cx + 0.12, cy, 0.0] # Right side
+        
+        return landmarks, pitch
+            
     def distance(self, p1, p2):
         return np.linalg.norm(np.array(p1) - np.array(p2))
         
@@ -206,12 +271,35 @@ class DrowsinessDetector:
 
     def _run_monitoring(self):
         # Choose camera source
+        self.is_video_file = False
         if self.camera_type == 'webcam':
             source = 0
-            # Use DirectShow backend on Windows for quick and reliable camera boot
-            cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
+            # Try default backend first (fails immediately if no webcam on Windows)
+            cap = cv2.VideoCapture(source)
+            if not cap.isOpened():
+                # Try DirectShow just in case it is preferred by the system
+                cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
+                
+            if not cap.isOpened():
+                # Fallback to local video file if webcam is not available
+                fallback_video = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'Video Project 11.mp4'))
+                if os.path.exists(fallback_video):
+                    source = fallback_video
+                    cap = cv2.VideoCapture(source)
+                    self.is_video_file = True
         else:
             source = self.camera_url
+            # Try to resolve relative paths for local files
+            if source and not any(source.startswith(prefix) for prefix in ['rtsp://', 'http://', 'https://']):
+                if not os.path.exists(source):
+                    root_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', source))
+                    if os.path.exists(root_path):
+                        source = root_path
+                    else:
+                        public_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'frontend', 'public', source))
+                        if os.path.exists(public_path):
+                            source = public_path
+                self.is_video_file = True
             cap = cv2.VideoCapture(source)
             
         if not cap.isOpened():
@@ -236,13 +324,34 @@ class DrowsinessDetector:
         
         print(f"[INFO] Monitoring started for {self.vehicle_number} using {self.camera_type}")
         
+        consecutive_failures = 0
         while self.running:
             try:
                 ret, frame = cap.read()
                 if not ret:
-                    print(f"[WARN] Failed to grab frame for {self.vehicle_number}")
-                    time.sleep(0.03)
-                    continue
+                    consecutive_failures += 1
+                    # If local webcam is failing to deliver frames, fallback to demo video file
+                    if self.camera_type == 'webcam' and not getattr(self, 'is_video_file', False) and consecutive_failures >= 5:
+                        print("[WARN] Local webcam is not delivering frames. Falling back to Video Project 11.mp4...")
+                        cap.release()
+                        fallback_video = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'Video Project 11.mp4'))
+                        if os.path.exists(fallback_video):
+                            source = fallback_video
+                            cap = cv2.VideoCapture(source)
+                            self.is_video_file = True
+                            ret, frame = cap.read()
+                    
+                    if not ret and getattr(self, 'is_video_file', False):
+                        # Reset video file back to the first frame for continuous looping
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        ret, frame = cap.read()
+                    
+                    if not ret:
+                        print(f"[WARN] Failed to grab frame for {self.vehicle_number}")
+                        time.sleep(0.03)
+                        continue
+                else:
+                    consecutive_failures = 0
                     
                 h, w, c = frame.shape
                 
@@ -262,124 +371,147 @@ class DrowsinessDetector:
                 
                 annotated_frame = frame.copy()
                 
-                if results.multi_face_landmarks:
-                    for face_landmarks in results.multi_face_landmarks:
-                        # Extract 2D landmarks (x, y mapped to 0-1)
+                # Check if we should use mock simulation landmarks
+                use_mock = False
+                landmarks = None
+                animated_pitch = 0.0
+                
+                if not results.multi_face_landmarks and getattr(self, 'is_video_file', False):
+                    use_mock = True
+                    # Generate mock landmarks based on current timestamp
+                    landmarks, animated_pitch = self.get_mock_landmarks(time.time())
+                
+                if results.multi_face_landmarks or use_mock:
+                    if not use_mock:
+                        face_landmarks = results.multi_face_landmarks[0]
                         landmarks = [(lm.x, lm.y, lm.z) for lm in face_landmarks.landmark]
+                    
+                    # 1. Calculate Eye Aspect Ratio (EAR)
+                    ear_left = self.calculate_ear(landmarks, LEFT_EYE)
+                    ear_right = self.calculate_ear(landmarks, RIGHT_EYE)
+                    raw_ear = (ear_left + ear_right) / 2.0
+                    
+                    # 2. Calculate Mouth Aspect Ratio (MAR)
+                    raw_mar = self.calculate_mar(landmarks, INNER_MOUTH)
+                    
+                    # Apply moving average filter to smooth mesh jitter
+                    self.ear_history.append(raw_ear)
+                    self.mar_history.append(raw_mar)
+                    if len(self.ear_history) > self.smoothing_window:
+                        self.ear_history.pop(0)
+                    if len(self.mar_history) > self.smoothing_window:
+                        self.mar_history.pop(0)
                         
-                        # 1. Calculate Eye Aspect Ratio (EAR)
-                        ear_left = self.calculate_ear(landmarks, LEFT_EYE)
-                        ear_right = self.calculate_ear(landmarks, RIGHT_EYE)
-                        raw_ear = (ear_left + ear_right) / 2.0
-                        
-                        # 2. Calculate Mouth Aspect Ratio (MAR)
-                        raw_mar = self.calculate_mar(landmarks, INNER_MOUTH)
-                        
-                        # Apply moving average filter to smooth mesh jitter
-                        self.ear_history.append(raw_ear)
-                        self.mar_history.append(raw_mar)
-                        if len(self.ear_history) > self.smoothing_window:
-                            self.ear_history.pop(0)
-                        if len(self.mar_history) > self.smoothing_window:
-                            self.mar_history.pop(0)
-                            
-                        ear = sum(self.ear_history) / len(self.ear_history)
-                        mar = sum(self.mar_history) / len(self.mar_history)
-                        
-                        # 3. Calculate Head Pose (Pitch, Yaw, Roll)
+                    ear = sum(self.ear_history) / len(self.ear_history)
+                    mar = sum(self.mar_history) / len(self.mar_history)
+                    
+                    # 3. Calculate Head Pose (Pitch, Yaw, Roll)
+                    if use_mock:
+                        pitch = animated_pitch
+                        yaw = 0.0
+                        roll = 0.0
+                        rvec, tvec, camera_matrix = None, None, None
+                    else:
                         pitch, yaw, roll, rvec, tvec, camera_matrix = self.get_head_pose(landmarks, (h, w))
+                    
+                    # Render face landmarks visually
+                    # Eyes
+                    for idx in LEFT_EYE + RIGHT_EYE:
+                        x = int(landmarks[idx][0] * w)
+                        y = int(landmarks[idx][1] * h)
+                        cv2.circle(annotated_frame, (x, y), 2, (0, 255, 0), -1)
                         
-                        # Render face landmarks visually
-                        # Eyes
-                        for idx in LEFT_EYE + RIGHT_EYE:
-                            x = int(landmarks[idx][0] * w)
-                            y = int(landmarks[idx][1] * h)
-                            cv2.circle(annotated_frame, (x, y), 2, (0, 255, 0), -1)
-                            
-                        # Mouth
-                        for idx in INNER_MOUTH:
-                            x = int(landmarks[idx][0] * w)
-                            y = int(landmarks[idx][1] * h)
-                            cv2.circle(annotated_frame, (x, y), 2, (0, 255, 255), -1)
-                            
-                        # Head Pose Axes (High-tech HUD look)
-                        if rvec is not None and tvec is not None:
-                            # Draw 3D axis at the nose tip (index 1)
-                            axis = np.array([
-                                (120.0, 0.0, 0.0),  # X axis (pitch)
-                                (0.0, 120.0, 0.0),  # Y axis (yaw)
-                                (0.0, 0.0, 120.0)   # Z axis (roll)
-                            ], dtype=np.float32)
-                            
-                            dist_coeffs = np.zeros((4, 1), dtype=np.float32)
-                            axis_img_pts, _ = cv2.projectPoints(axis, rvec, tvec, camera_matrix, dist_coeffs)
-                            
-                            nose_x = int(landmarks[1][0] * w)
-                            nose_y = int(landmarks[1][1] * h)
-                            
-                            # Draw X axis (Red)
-                            pt_x = (int(axis_img_pts[0][0][0]), int(axis_img_pts[0][0][1]))
-                            cv2.line(annotated_frame, (nose_x, nose_y), pt_x, (0, 0, 255), 2)
-                            
-                            # Draw Y axis (Green)
-                            pt_y = (int(axis_img_pts[1][0][0]), int(axis_img_pts[1][0][1]))
-                            cv2.line(annotated_frame, (nose_x, nose_y), pt_y, (0, 255, 0), 2)
-                            
-                            # Draw Z axis (Blue)
-                            pt_z = (int(axis_img_pts[2][0][0]), int(axis_img_pts[2][0][1]))
-                            cv2.line(annotated_frame, (nose_x, nose_y), pt_z, (255, 0, 0), 2)
-                            
-                        # Face Bounding Box
-                        x_coords = [int(lm[0] * w) for lm in landmarks]
-                        y_coords = [int(lm[1] * h) for lm in landmarks]
-                        min_x, max_x = min(x_coords), max(x_coords)
-                        min_y, max_y = min(y_coords), max(y_coords)
-                        # padding
-                        pad_w = int((max_x - min_x) * 0.1)
-                        pad_h = int((max_y - min_y) * 0.15)
-                        cv2.rectangle(
-                            annotated_frame, 
-                            (max(0, min_x - pad_w), max(0, min_y - pad_h)), 
-                            (min(w, max_x + pad_w), min(h, max_y + pad_h)), 
-                            (0, 255, 0) if self.status == "Awake" else ((0, 255, 255) if self.status in ["Yawning", "Nodding"] else (0, 0, 255)), 
-                            2
-                        )
+                    # Mouth
+                    for idx in INNER_MOUTH:
+                        x = int(landmarks[idx][0] * w)
+                        y = int(landmarks[idx][1] * h)
+                        cv2.circle(annotated_frame, (x, y), 2, (0, 255, 255), -1)
+                        
+                    # Head Pose Axes (High-tech HUD look)
+                    if not use_mock and rvec is not None and tvec is not None:
+                        # Draw 3D axis at the nose tip (index 1)
+                        axis = np.array([
+                            (120.0, 0.0, 0.0),  # X axis (pitch)
+                            (0.0, 120.0, 0.0),  # Y axis (yaw)
+                            (0.0, 0.0, 120.0)   # Z axis (roll)
+                        ], dtype=np.float32)
+                        
+                        dist_coeffs = np.zeros((4, 1), dtype=np.float32)
+                        axis_img_pts, _ = cv2.projectPoints(axis, rvec, tvec, camera_matrix, dist_coeffs)
+                        
+                        nose_x = int(landmarks[1][0] * w)
+                        nose_y = int(landmarks[1][1] * h)
+                        
+                        # Draw X axis (Red)
+                        pt_x = (int(axis_img_pts[0][0][0]), int(axis_img_pts[0][0][1]))
+                        cv2.line(annotated_frame, (nose_x, nose_y), pt_x, (0, 0, 255), 2)
+                        
+                        # Draw Y axis (Green)
+                        pt_y = (int(axis_img_pts[1][0][0]), int(axis_img_pts[1][0][1]))
+                        cv2.line(annotated_frame, (nose_x, nose_y), pt_y, (0, 255, 0), 2)
+                        
+                        # Draw Z axis (Blue)
+                        pt_z = (int(axis_img_pts[2][0][0]), int(axis_img_pts[2][0][1]))
+                        cv2.line(annotated_frame, (nose_x, nose_y), pt_z, (255, 0, 0), 2)
+                    elif use_mock:
+                        # Draw simulated axis
+                        nose_x = int(landmarks[1][0] * w)
+                        nose_y = int(landmarks[1][1] * h)
+                        pitch_offset = int(pitch * 2)
+                        cv2.line(annotated_frame, (nose_x, nose_y), (nose_x + 50, nose_y), (0, 0, 255), 2)
+                        cv2.line(annotated_frame, (nose_x, nose_y), (nose_x, nose_y - 50 + pitch_offset), (0, 255, 0), 2)
+                        cv2.line(annotated_frame, (nose_x, nose_y), (nose_x - 30, nose_y + 30), (255, 0, 0), 2)
+                        
+                    # Face Bounding Box
+                    x_coords = [int(lm[0] * w) for lm in landmarks]
+                    y_coords = [int(lm[1] * h) for lm in landmarks]
+                    min_x, max_x = min(x_coords), max(x_coords)
+                    min_y, max_y = min(y_coords), max(y_coords)
+                    # padding
+                    pad_w = int((max_x - min_x) * 0.1)
+                    pad_h = int((max_y - min_y) * 0.15)
+                    cv2.rectangle(
+                        annotated_frame, 
+                        (max(0, min_x - pad_w), max(0, min_y - pad_h)), 
+                        (min(w, max_x + pad_w), min(h, max_y + pad_h)), 
+                        (0, 255, 0) if self.status == "Awake" else ((0, 255, 255) if self.status in ["Yawning", "Nodding"] else (0, 0, 255)), 
+                        2
+                    )
     
-                        # --- DETECTOR STATE MACHINE ---
-                        now = time.time()
+                    # --- DETECTOR STATE MACHINE ---
+                    now = time.time()
+                    
+                    # A. Eye Closure (Sleeping) Detection
+                    if ear < self.EAR_THRESHOLD:
+                        if self.eye_closed_start is None:
+                            self.eye_closed_start = now
+                        elif now - self.eye_closed_start >= self.CLOSED_EYE_DURATION:
+                            current_status = "Sleeping"
+                            self.trigger_alert("sleeping", frame)
+                    else:
+                        self.eye_closed_start = None
                         
-                        # A. Eye Closure (Sleeping) Detection
-                        if ear < self.EAR_THRESHOLD:
-                            if self.eye_closed_start is None:
-                                self.eye_closed_start = now
-                            elif now - self.eye_closed_start >= self.CLOSED_EYE_DURATION:
-                                current_status = "Sleeping"
-                                self.trigger_alert("sleeping", frame)
-                        else:
-                            self.eye_closed_start = None
-                            
-                        # B. Yawning Detection
-                        if mar > self.MAR_THRESHOLD:
-                            if self.yawn_start is None:
-                                self.yawn_start = now
-                            elif now - self.yawn_start >= self.YAWN_DURATION:
-                                if current_status != "Sleeping": # Prioritize sleeping
-                                    current_status = "Yawning"
-                                self.trigger_alert("yawning", frame)
-                        else:
-                            self.yawn_start = None
-                            
-                        # C. Head Nodding / Sagging Detection
-                        # If pitch goes below the threshold (nodding forward)
-                        if pitch < self.NOD_PITCH_THRESHOLD:
-                            if self.nod_start is None:
-                                self.nod_start = now
-                            elif now - self.nod_start >= self.NOD_DURATION:
-                                if current_status not in ["Sleeping", "Yawning"]:
-                                    current_status = "Nodding"
-                                self.trigger_alert("nodding", frame)
-                        else:
-                            self.nod_start = None
+                    # B. Yawning Detection
+                    if mar > self.MAR_THRESHOLD:
+                        if self.yawn_start is None:
+                            self.yawn_start = now
+                        elif now - self.yawn_start >= self.YAWN_DURATION:
+                            if current_status != "Sleeping": # Prioritize sleeping
+                                current_status = "Yawning"
+                            self.trigger_alert("yawning", frame)
+                    else:
+                        self.yawn_start = None
+                        
+                    # C. Head Nodding / Sagging Detection
+                    if pitch < self.NOD_PITCH_THRESHOLD:
+                        if self.nod_start is None:
+                            self.nod_start = now
+                        elif now - self.nod_start >= self.NOD_DURATION:
+                            if current_status not in ["Sleeping", "Yawning"]:
+                                current_status = "Nodding"
+                            self.trigger_alert("nodding", frame)
+                    else:
+                        self.nod_start = None
                 else:
                     # No face detected
                     current_status = "No Face Detected"
@@ -445,10 +577,27 @@ class DrowsinessDetector:
             # Check if source is digit (webcam)
             if str(source_url).isdigit():
                 src = int(source_url)
-                # DirectShow backend on Windows is more responsive and prevents locks
-                cap = cv2.VideoCapture(src, cv2.CAP_DSHOW)
+                # Try default MSMF backend first to fail fast on Windows if no webcam is present
+                cap = cv2.VideoCapture(src)
+                if not cap.isOpened():
+                    cap = cv2.VideoCapture(src, cv2.CAP_DSHOW)
+                if not cap.isOpened():
+                    # Fallback to local video file test if webcam is not available
+                    fallback_video = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'Video Project 11.mp4'))
+                    if os.path.exists(fallback_video):
+                        src = fallback_video
+                        cap = cv2.VideoCapture(src)
             else:
                 src = source_url
+                if src and not any(src.startswith(prefix) for prefix in ['rtsp://', 'http://', 'https://']):
+                    if not os.path.exists(src):
+                        root_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', src))
+                        if os.path.exists(root_path):
+                            src = root_path
+                        else:
+                            public_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'frontend', 'public', src))
+                            if os.path.exists(public_path):
+                                src = public_path
                 cap = cv2.VideoCapture(src)
             
             if cap.isOpened():

@@ -231,6 +231,11 @@ export default function OwnerDashboard({ onLogout }) {
           const audio = new Audio('/fa.mp3');
           audio.play().catch(e => console.warn("Audio play blocked by browser:", e));
         }
+      } else if (newAlert.alert_type === 'yawning') {
+        if (soundEnabled) {
+          const audio = new Audio('/y.mp3');
+          audio.play().catch(e => console.warn("Audio play blocked by browser:", e));
+        }
       } else {
         playAlertSound(450, 0.4); // warning pitch
       }

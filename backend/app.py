@@ -224,7 +224,8 @@ def get_monitoring_status(vehicle_number):
 # Video Stream Endpoint
 @app.route('/api/stream/<vehicle_number>')
 def stream_video(vehicle_number):
-    vehicle_number = vehicle_number.upper()
+    import urllib.parse
+    vehicle_number = urllib.parse.unquote(vehicle_number).upper()
     detector = active_monitors.get(vehicle_number)
     
     if not detector:
@@ -232,11 +233,41 @@ def stream_video(vehicle_number):
         return "Stream not active", 404
         
     def generate():
+        import cv2
+        import numpy as np
+        
+        # Check if we already have a frame ready from detector
+        frame = detector.get_latest_frame()
+        if frame:
+            # If a frame is already available, yield it immediately
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+            placeholder_bytes = None
+        else:
+            # Generate a connecting placeholder frame only if not ready
+            placeholder_img = np.zeros((480, 640, 3), dtype=np.uint8)
+            cv2.putText(placeholder_img, "Connecting to stream...", (120, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
+            _, jpeg_enc = cv2.imencode('.jpg', placeholder_img)
+            placeholder_bytes = jpeg_enc.tobytes()
+            
+            # Immediately establish the connection by yielding the placeholder
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + placeholder_bytes + b'\r\n')
+               
         while vehicle_number in active_monitors:
             frame = detector.get_latest_frame()
             if frame:
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+            else:
+                # If frame is not ready yet, keep yielding the placeholder to prevent timeout
+                if placeholder_bytes is None:
+                    placeholder_img = np.zeros((480, 640, 3), dtype=np.uint8)
+                    cv2.putText(placeholder_img, "Connecting to stream...", (120, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
+                    _, jpeg_enc = cv2.imencode('.jpg', placeholder_img)
+                    placeholder_bytes = jpeg_enc.tobytes()
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + placeholder_bytes + b'\r\n')
             time.sleep(0.04) # ~25 FPS
             
     return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
