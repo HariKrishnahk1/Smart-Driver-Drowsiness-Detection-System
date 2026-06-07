@@ -403,6 +403,14 @@ def handle_connect():
 def handle_disconnect():
     print(f"[SOCKET] Client disconnected: {request.sid}")
 
+@socketio.on('driver_frame')
+def handle_driver_frame(data):
+    vehicle_number = data.get('vehicle_number', '').upper()
+    image_data = data.get('image')
+    detector = active_monitors.get(vehicle_number)
+    if detector and image_data:
+        detector.process_client_frame(image_data)
+
 @socketio.on('join_dashboard')
 def handle_join_dashboard(data):
     join_room('owners_room')

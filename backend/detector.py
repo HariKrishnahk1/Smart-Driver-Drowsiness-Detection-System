@@ -70,6 +70,15 @@ class DrowsinessDetector:
         if not os.path.exists(self.screenshots_dir):
             os.makedirs(self.screenshots_dir)
             
+        # Initialize MediaPipe FaceMesh
+        mp_face_mesh = mp.solutions.face_mesh
+        self.face_mesh = mp_face_mesh.FaceMesh(
+            max_num_faces=1,
+            refine_landmarks=True,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5
+        )
+            
     def get_mock_landmarks(self, t):
         # Initialize 478 landmarks
         landmarks = [[0.5, 0.5, 0.0] for _ in range(478)]
@@ -231,6 +240,10 @@ class DrowsinessDetector:
                 })
         if self.thread:
             self.thread.join(timeout=2.0)
+        try:
+            self.face_mesh.close()
+        except:
+            pass
             
     def get_latest_frame(self):
         with self.lock:
@@ -271,45 +284,33 @@ class DrowsinessDetector:
 
     def _run_monitoring(self):
         try:
-            # Choose camera source
             self.is_video_file = False
             print(f"[DEBUG MONITOR] Starting camera init for {self.vehicle_number}, camera_type={self.camera_type}, camera_url={self.camera_url}")
+            
             if self.camera_type == 'webcam':
-                source = 0
-                print("[DEBUG MONITOR] Attempting webcam source 0")
-                cap = cv2.VideoCapture(source)
-                if not cap.isOpened():
-                    print("[DEBUG MONITOR] Webcam source 0 failed, trying CAP_DSHOW")
-                    cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
-                    
-                if not cap.isOpened():
-                    fallback_video = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'Video Project 11.mp4'))
-                    print(f"[DEBUG MONITOR] Webcam failed. Checking fallback video path: {fallback_video}")
-                    print(f"[DEBUG MONITOR] Fallback video file exists: {os.path.exists(fallback_video)}")
-                    if os.path.exists(fallback_video):
-                        source = fallback_video
-                        print(f"[DEBUG MONITOR] Loading fallback video: {source}")
-                        cap = cv2.VideoCapture(source)
-                        self.is_video_file = True
-                        print(f"[DEBUG MONITOR] Fallback video opened: {cap.isOpened()}")
-            else:
-                source = self.camera_url
-                print(f"[DEBUG MONITOR] Attempting IP Camera/video URL: {source}")
-                # Try to resolve relative paths for local files
-                if source and not any(source.startswith(prefix) for prefix in ['rtsp://', 'http://', 'https://']):
-                    if not os.path.exists(source):
-                        root_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', source))
-                        print(f"[DEBUG MONITOR] Checking root path: {root_path}")
-                        if os.path.exists(root_path):
-                            source = root_path
-                        else:
-                            public_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'frontend', 'public', source))
-                            print(f"[DEBUG MONITOR] Checking public path: {public_path}")
-                            if os.path.exists(public_path):
-                                source = public_path
-                    self.is_video_file = True
-                cap = cv2.VideoCapture(source)
-                print(f"[DEBUG MONITOR] IP Camera/video source opened: {cap.isOpened()}")
+                print(f"[INFO] Webcam client-stream mode active for {self.vehicle_number}. Passive monitoring started.")
+                # Just loop and sleep while running, client-side sends frames via socket driver_frame event
+                while self.running:
+                    time.sleep(0.1)
+                return
+                
+            source = self.camera_url
+            print(f"[DEBUG MONITOR] Attempting IP Camera/video URL: {source}")
+            # Try to resolve relative paths for local files
+            if source and not any(source.startswith(prefix) for prefix in ['rtsp://', 'http://', 'https://']):
+                if not os.path.exists(source):
+                    root_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', source))
+                    print(f"[DEBUG MONITOR] Checking root path: {root_path}")
+                    if os.path.exists(root_path):
+                        source = root_path
+                    else:
+                        public_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'frontend', 'public', source))
+                        print(f"[DEBUG MONITOR] Checking public path: {public_path}")
+                        if os.path.exists(public_path):
+                            source = public_path
+                self.is_video_file = True
+            cap = cv2.VideoCapture(source)
+            print(f"[DEBUG MONITOR] IP Camera/video source opened: {cap.isOpened()}")
                 
             if not cap.isOpened():
                 print(f"[ERROR] Failed to open camera for {self.vehicle_number} (both primary and fallback failed)")
@@ -322,15 +323,6 @@ class DrowsinessDetector:
                 self.running = False
                 return
                 
-            # Initialize MediaPipe
-            print("[DEBUG MONITOR] Initializing MediaPipe FaceMesh")
-            mp_face_mesh = mp.solutions.face_mesh
-            face_mesh = mp_face_mesh.FaceMesh(
-                max_num_faces=1,
-                refine_landmarks=True,
-                min_detection_confidence=0.5,
-                min_tracking_confidence=0.5
-            )
             print(f"[INFO] Monitoring started successfully for {self.vehicle_number} using {self.camera_type}")
         except Exception as e:
             print(f"[FATAL INIT ERROR] Exception during detector setup: {e}")
@@ -391,7 +383,7 @@ class DrowsinessDetector:
                 
                 # Convert color space for MediaPipe
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                results = face_mesh.process(rgb_frame)
+                results = self.face_mesh.process(rgb_frame)
                 
                 current_status = "Awake"
                 ear = 0.0
@@ -598,8 +590,203 @@ class DrowsinessDetector:
             time.sleep(0.01)
             
         cap.release()
-        face_mesh.close()
         print(f"[INFO] Monitoring stopped for {self.vehicle_number}")
+
+    def process_client_frame(self, base64_image_str):
+        if not self.running:
+            return
+            
+        try:
+            import base64
+            # Strip data url prefix if present
+            if ',' in base64_image_str:
+                base64_image_str = base64_image_str.split(',')[1]
+                
+            # Decode base64 to bytes
+            img_bytes = base64.b64decode(base64_image_str)
+            nparr = np.frombuffer(img_bytes, np.uint8)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            
+            if frame is None:
+                return
+                
+            h, w, c = frame.shape
+            
+            # Since client webcam is already flipped/natural, we don't need to flip it again
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = self.face_mesh.process(rgb_frame)
+            
+            current_status = "Awake"
+            ear = 0.0
+            mar = 0.0
+            pitch = 0.0
+            yaw = 0.0
+            roll = 0.0
+            
+            annotated_frame = frame.copy()
+            
+            if results.multi_face_landmarks:
+                face_landmarks = results.multi_face_landmarks[0]
+                landmarks = [(lm.x, lm.y, lm.z) for lm in face_landmarks.landmark]
+                
+                # 1. Calculate Eye Aspect Ratio (EAR)
+                ear_left = self.calculate_ear(landmarks, LEFT_EYE)
+                ear_right = self.calculate_ear(landmarks, RIGHT_EYE)
+                raw_ear = (ear_left + ear_right) / 2.0
+                
+                # 2. Calculate Mouth Aspect Ratio (MAR)
+                raw_mar = self.calculate_mar(landmarks, INNER_MOUTH)
+                
+                # Apply moving average filter to smooth mesh jitter
+                self.ear_history.append(raw_ear)
+                self.mar_history.append(raw_mar)
+                if len(self.ear_history) > self.smoothing_window:
+                    self.ear_history.pop(0)
+                if len(self.mar_history) > self.smoothing_window:
+                    self.mar_history.pop(0)
+                    
+                ear = sum(self.ear_history) / len(self.ear_history)
+                mar = sum(self.mar_history) / len(self.mar_history)
+                
+                # 3. Calculate Head Pose (Pitch, Yaw, Roll)
+                pitch, yaw, roll, rvec, tvec, camera_matrix = self.get_head_pose(landmarks, (h, w))
+                
+                # Render face landmarks visually
+                # Eyes
+                for idx in LEFT_EYE + RIGHT_EYE:
+                    x = int(landmarks[idx][0] * w)
+                    y = int(landmarks[idx][1] * h)
+                    cv2.circle(annotated_frame, (x, y), 2, (0, 255, 0), -1)
+                    
+                # Mouth
+                for idx in INNER_MOUTH:
+                    x = int(landmarks[idx][0] * w)
+                    y = int(landmarks[idx][1] * h)
+                    cv2.circle(annotated_frame, (x, y), 2, (0, 255, 255), -1)
+                    
+                # Head Pose Axes
+                if rvec is not None and tvec is not None:
+                    axis = np.array([
+                        (120.0, 0.0, 0.0),
+                        (0.0, 120.0, 0.0),
+                        (0.0, 0.0, 120.0)
+                    ], dtype=np.float32)
+                    
+                    dist_coeffs = np.zeros((4, 1), dtype=np.float32)
+                    axis_img_pts, _ = cv2.projectPoints(axis, rvec, tvec, camera_matrix, dist_coeffs)
+                    
+                    nose_x = int(landmarks[1][0] * w)
+                    nose_y = int(landmarks[1][1] * h)
+                    
+                    # Draw X axis (Red)
+                    pt_x = (int(axis_img_pts[0][0][0]), int(axis_img_pts[0][0][1]))
+                    cv2.line(annotated_frame, (nose_x, nose_y), pt_x, (0, 0, 255), 2)
+                    
+                    # Draw Y axis (Green)
+                    pt_y = (int(axis_img_pts[1][0][0]), int(axis_img_pts[1][0][1]))
+                    cv2.line(annotated_frame, (nose_x, nose_y), pt_y, (0, 255, 0), 2)
+                    
+                    # Draw Z axis (Blue)
+                    pt_z = (int(axis_img_pts[2][0][0]), int(axis_img_pts[2][0][1]))
+                    cv2.line(annotated_frame, (nose_x, nose_y), pt_z, (255, 0, 0), 2)
+                    
+                # Face Bounding Box
+                x_coords = [int(lm[0] * w) for lm in landmarks]
+                y_coords = [int(lm[1] * h) for lm in landmarks]
+                min_x, max_x = min(x_coords), max(x_coords)
+                min_y, max_y = min(y_coords), max(y_coords)
+                # padding
+                pad_w = int((max_x - min_x) * 0.1)
+                pad_h = int((max_y - min_y) * 0.15)
+                cv2.rectangle(
+                    annotated_frame, 
+                    (max(0, min_x - pad_w), max(0, min_y - pad_h)), 
+                    (min(w, max_x + pad_w), min(h, max_y + pad_h)), 
+                    (0, 255, 0) if self.status == "Awake" else ((0, 255, 255) if self.status in ["Yawning", "Nodding"] else (0, 0, 255)), 
+                    2
+                )
+
+                # --- DETECTOR STATE MACHINE ---
+                now = time.time()
+                
+                # A. Eye Closure (Sleeping) Detection
+                if ear < self.EAR_THRESHOLD:
+                    if self.eye_closed_start is None:
+                        self.eye_closed_start = now
+                    elif now - self.eye_closed_start >= self.CLOSED_EYE_DURATION:
+                        current_status = "Sleeping"
+                        self.trigger_alert("sleeping", frame)
+                else:
+                    self.eye_closed_start = None
+                    
+                # B. Yawning Detection
+                if mar > self.MAR_THRESHOLD:
+                    if self.yawn_start is None:
+                        self.yawn_start = now
+                    elif now - self.yawn_start >= self.YAWN_DURATION:
+                        if current_status != "Sleeping":
+                            current_status = "Yawning"
+                        self.trigger_alert("yawning", frame)
+                else:
+                    self.yawn_start = None
+                    
+                # C. Head Nodding / Sagging Detection
+                if pitch < self.NOD_PITCH_THRESHOLD:
+                    if self.nod_start is None:
+                        self.nod_start = now
+                    elif now - self.nod_start >= self.NOD_DURATION:
+                        if current_status not in ["Sleeping", "Yawning"]:
+                            current_status = "Nodding"
+                        self.trigger_alert("nodding", frame)
+                else:
+                    self.nod_start = None
+            else:
+                current_status = "No Face Detected"
+                self.eye_closed_start = None
+                self.yawn_start = None
+                self.nod_start = None
+                self.ear_history.clear()
+                self.mar_history.clear()
+                
+            # Update status and broadcast via socket if changed
+            if current_status != self.status:
+                self.status = current_status
+                if self.socketio:
+                    self.socketio.emit('status_change', {
+                        'vehicle_number': self.vehicle_number,
+                        'status': self.status,
+                        'ear': round(ear, 3),
+                        'mar': round(mar, 3),
+                        'pitch': round(pitch, 1)
+                    })
+                    
+            # Visual HUD Info Overlay
+            status_colors = {
+                "Awake": (0, 255, 0),
+                "Yawning": (0, 255, 255),
+                "Nodding": (0, 255, 255),
+                "Sleeping": (0, 0, 255),
+                "No Face Detected": (128, 128, 128)
+            }
+            color = status_colors.get(self.status, (255, 255, 255))
+            
+            # Top-left HUD card
+            cv2.rectangle(annotated_frame, (10, 10), (280, 130), (0, 0, 0), -1)
+            cv2.rectangle(annotated_frame, (10, 10), (280, 130), color, 1)
+            
+            cv2.putText(annotated_frame, f"VEHICLE: {self.vehicle_number}", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.putText(annotated_frame, f"STATUS: {self.status.upper()}", (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+            cv2.putText(annotated_frame, f"EAR: {ear:.3f} (th:{self.EAR_THRESHOLD})", (20, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+            cv2.putText(annotated_frame, f"MAR: {mar:.3f} (th:{self.MAR_THRESHOLD})", (20, 105), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+            cv2.putText(annotated_frame, f"PITCH: {pitch:.1f} deg", (20, 122), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+            
+            # Encode frame to JPEG
+            ret_enc, jpeg = cv2.imencode('.jpg', annotated_frame)
+            if ret_enc:
+                with self.lock:
+                    self.latest_frame = jpeg.tobytes()
+        except Exception as e:
+            print(f"[CLIENT FRAME EXCEPTION] Error processing frame: {e}")
 
     @staticmethod
     def test_camera_connection(source_url):
